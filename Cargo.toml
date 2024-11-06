@@ -9,3 +9,5 @@ keywords = ["teeworlds", "console"]
 categories = ["command-line-interface", "api-bindings"]
 repository = "https://github.com/gerdoe-jr/tw-econ"
 description = "Simple Rust library to use Teeworlds external console"
+[dependencies]
+tokio = { version = "1.41.0", features = ["time", "net", "io-util"] }

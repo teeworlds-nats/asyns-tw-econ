@@ -1,5 +1,6 @@
-use std::io::{Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpStream};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use std::net::SocketAddr;
 use std::time::Duration;
 
 pub struct EconRaw {
@@ -12,7 +13,7 @@ pub struct EconRaw {
 }
 
 impl EconRaw {
-    pub fn connect(
+    pub async fn connect(
         address: impl Into<SocketAddr>,
         buffer_size: usize,
         timeout_secs: u64,
@@ -20,7 +21,8 @@ impl EconRaw {
         let buffer = vec![0u8; buffer_size];
         let address = address.into();
 
-        let connection = TcpStream::connect_timeout(&address, Duration::from_secs(timeout_secs))?;
+        let connection = tokio::time::timeout(Duration::from_secs(timeout_secs), TcpStream::connect(&address))
+            .await??;
 
         Ok(Self {
             socket: connection,
@@ -28,28 +30,28 @@ impl EconRaw {
             lines: Vec::new(),
             unfinished_line: String::new(),
             authed: false,
-            auth_message: "Authentication successful".to_string()
+            auth_message: "Authentication successful".to_string(),
         })
     }
 
-    pub fn disconnect(&mut self) -> std::io::Result<()> {
-        self.socket.shutdown(Shutdown::Both)
+    pub async fn disconnect(&mut self) -> std::io::Result<()> {
+        self.socket.shutdown().await
     }
 
     pub fn set_auth_message(&mut self, auth_message: String) {
-        self.auth_message = auth_message
+        self.auth_message = auth_message;
     }
 
-    pub fn auth(&mut self, password: &str) -> std::io::Result<bool> {
-        self.read()?;
+    pub async fn auth(&mut self, password: &str) -> std::io::Result<bool> {
+        self.read().await?;
         self.lines.clear();
 
-        self.send(password)?;
+        self.send(password).await?;
 
-        self.read()?;
+        self.read().await?;
 
         while let Some(line) = self.pop_line() {
-            if line.starts_with(self.auth_message.as_str()) {
+            if line.starts_with(&self.auth_message) {
                 self.authed = true;
             }
         }
@@ -57,14 +59,14 @@ impl EconRaw {
         Ok(self.authed)
     }
 
-    pub fn read(&mut self) -> std::io::Result<usize> {
+    pub async fn read(&mut self) -> std::io::Result<usize> {
         let mut lines_amount = 0;
-        let written = self.socket.read(&mut self.buffer)?;
+        let written = self.socket.read(&mut self.buffer).await?;
 
         if written != 0 {
             let mut lines: Vec<String> = String::from_utf8_lossy(&self.buffer[..written])
                 .replace('\0', "")
-                .split("\n")
+                .split('\n')
                 .map(String::from)
                 .collect();
 
@@ -82,19 +84,16 @@ impl EconRaw {
             }
 
             lines_amount = lines.len();
-
             self.lines.extend(lines);
         }
 
         Ok(lines_amount)
     }
 
-    pub fn send(&mut self, line: &str) -> std::io::Result<()> {
-        self.socket.write_all(line.as_bytes())?;
-        self.socket.write_all("\n".as_bytes())?;
-
-        self.socket.flush()?;
-
+    pub async fn send(&mut self, line: &str) -> std::io::Result<()> {
+        self.socket.write_all(line.as_bytes()).await?;
+        self.socket.write_all(b"\n").await?;
+        self.socket.flush().await?;
         Ok(())
     }
 
